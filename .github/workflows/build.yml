@@ -1,0 +1,116 @@
+name: Build SNES PS2 Emulator
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Free Disk Space
+      run: |
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /opt/ghc
+        sudo rm -rf "/usr/local/share/boost"
+        sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+        df -h
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential cmake git patch wget \
+          texinfo libgmp-dev libmpfr-dev libmpc-dev zlib1g-dev \
+          bison flex gettext autoconf automake libtool
+    
+    - name: Cache PS2DEV
+      id: cache-ps2dev
+      uses: actions/cache@v3
+      with:
+        path: /usr/local/ps2dev
+        key: ps2dev-${{ runner.os }}-v1
+    
+    - name: Install PS2DEV
+      if: steps.cache-ps2dev.outputs.cache-hit != 'true'
+      run: |
+        git clone https://github.com/ps2dev/ps2dev.git
+        cd ps2dev
+        export PS2DEV=/usr/local/ps2dev
+        export PS2SDK=$PS2DEV/ps2sdk
+        export PATH=$PATH:$PS2DEV/bin:$PS2DEV/ee/bin:$PS2DEV/iop/bin
+        sudo mkdir -p $PS2DEV
+        sudo chown -R $USER:$USER $PS2DEV
+        ./build-all.sh
+    
+    - name: Setup environment
+      run: |
+        export PS2DEV=/usr/local/ps2dev
+        export PS2SDK=$PS2DEV/ps2sdk
+        export PATH=$PATH:$PS2DEV/bin:$PS2DEV/ee/bin:$PS2DEV/iop/bin
+        echo "PS2DEV=$PS2DEV" >> $GITHUB_ENV
+        echo "PS2SDK=$PS2SDK" >> $GITHUB_ENV
+        echo "$PS2DEV/bin" >> $GITHUB_PATH
+        echo "$PS2DEV/ee/bin" >> $GITHUB_PATH
+        echo "$PS2DEV/iop/bin" >> $GITHUB_PATH
+    
+    - name: Verify toolchain
+      run: |
+        which ee-gcc
+        ee-gcc --version
+    
+    - name: Build emulator
+      run: |
+        make
+        ls -lh SNES.elf
+        file SNES.elf
+    
+    - name: Strip and optimize
+      run: |
+        ee-strip SNES.elf
+        cp SNES.elf SNES-FINAL.elf
+        ls -lh SNES-FINAL.elf
+    
+    - name: Upload artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: SNES-PS2-Emulator
+        path: |
+          SNES.elf
+          SNES-FINAL.elf
+    
+    - name: Create README for download
+      run: |
+        cat > BUILD-INFO.txt << 'EOF'
+        SNES EMULATOR FOR PLAYSTATION 2
+        ================================
+        
+        Build: GitHub Actions
+        Date: $(date)
+        Commit: ${{ github.sha }}
+        
+        Files:
+        - SNES.elf: Version with debug symbols
+        - SNES-FINAL.elf: Optimized version (USE THIS)
+        
+        How to use:
+        1. Copy SNES-FINAL.elf to USB drive (FAT32)
+        2. Rename to SNES.elf
+        3. Boot on PS2 with uLaunchELF
+        4. Navigate to mass:/SNES.elf
+        5. Press X to run
+        
+        Enjoy!
+        EOF
+    
+    - name: Upload README
+      uses: actions/upload-artifact@v3
+      with:
+        name: SNES-PS2-Emulator
+        path: BUILD-INFO.txt
